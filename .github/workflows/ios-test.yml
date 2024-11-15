@@ -1,0 +1,98 @@
+# Human Tasks:
+# 1. Ensure Xcode 14.0 is available in the GitHub Actions macOS runner
+# 2. Configure Codecov token in repository secrets if not already set
+# 3. Verify iOS simulator availability for iPhone 14 device
+
+# Addresses requirements:
+# - CI/CD Pipeline (Technical Specification/5.3.4 Infrastructure)
+# - iOS Development (Technical Specification/7.1 Programming Languages)
+
+name: iOS Tests
+
+on:
+  push:
+    branches: 
+      - main
+      - develop
+  pull_request:
+    branches:
+      - main
+      - develop
+
+jobs:
+  test:
+    name: Run iOS Tests
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v3 # v3.5.3
+
+      - name: Setup Xcode
+        uses: maxim-lobanov/setup-xcode@v1 # v1.6.0
+        with:
+          xcode-version: '14.0'
+
+      - name: Cache Swift Packages
+        uses: actions/cache@v3 # v3.3.1
+        with:
+          path: ~/Library/Developer/Xcode/DerivedData
+          key: ${{ runner.os }}-spm-${{ hashFiles('**/Package.resolved') }}
+          restore-keys: |
+            ${{ runner.os }}-spm-
+
+      - name: Install Swift Dependencies
+        working-directory: src/ios
+        run: |
+          xcodebuild -resolvePackageDependencies \
+            -scheme MintReplicaLite \
+            -configuration Debug
+
+      - name: Run Unit Tests and UI Tests
+        working-directory: src/ios
+        run: |
+          xcodebuild test \
+            -scheme MintReplicaLite \
+            -configuration Debug \
+            -destination 'platform=iOS Simulator,name=iPhone 14,OS=latest' \
+            -enableCodeCoverage YES \
+            -resultBundlePath TestResults.xcresult
+
+      - name: Generate Code Coverage Report
+        working-directory: src/ios
+        run: |
+          xcrun xccov view --report --json TestResults.xcresult > coverage.json
+
+      - name: Upload Code Coverage
+        uses: codecov/codecov-action@v3 # v3.1.4
+        with:
+          directory: src/ios
+          files: coverage.json
+          fail_ci_if_error: true
+          verbose: true
+
+      - name: Upload Test Results
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: test-results
+          path: src/ios/TestResults.xcresult
+          retention-days: 14
+
+      - name: Check Test Status
+        if: always()
+        run: |
+          if [ -f "src/ios/TestResults.xcresult/1_Test/status.json" ]; then
+            if grep -q "\"testsCount\":0" "src/ios/TestResults.xcresult/1_Test/status.json"; then
+              echo "No tests were executed!"
+              exit 1
+            fi
+          else
+            echo "Test results file not found!"
+            exit 1
+          fi
+
+env:
+  DEVELOPER_DIR: /Applications/Xcode_14.0.app/Contents/Developer
+  SWIFT_VERSION: 5.5
+  IOS_DEPLOYMENT_TARGET: 15.0
