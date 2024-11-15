@@ -1,0 +1,69 @@
+# Kubernetes API Version: v1.25+
+# NGINX Ingress Controller Version: 1.8+
+# Cert Manager Version: 1.11+
+
+# Human Tasks:
+# 1. Ensure NGINX Ingress Controller is installed in the cluster
+# 2. Install and configure cert-manager with LetsEncrypt issuer
+# 3. Verify DNS records for api.mintreplica.com point to the ingress load balancer
+# 4. Configure TLS certificate issuer named 'letsencrypt-prod'
+
+# This configuration implements:
+# - API Gateway Layer (Technical Specification/5.1 High-Level Architecture Overview)
+# - Service Integration (Technical Specification/7.3.1 Service Integration Architecture)
+# - Security Requirements (Technical Specification/8. Security/8.1 Security Requirements)
+
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: mint-replica-ingress
+  namespace: mint-api
+  annotations:
+    # Ingress controller configuration
+    kubernetes.io/ingress.class: "nginx"
+    
+    # SSL/TLS configuration
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/rewrite-target: "/$2"
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    
+    # CORS configuration
+    nginx.ingress.kubernetes.io/enable-cors: "true"
+    nginx.ingress.kubernetes.io/cors-allow-methods: "GET, POST, PUT, DELETE, OPTIONS"
+    nginx.ingress.kubernetes.io/cors-allow-origin: "*"
+    
+    # Proxy configuration and timeouts
+    nginx.ingress.kubernetes.io/proxy-body-size: "10m"
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "60"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "60"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "60"
+
+spec:
+  # TLS configuration
+  tls:
+    - hosts:
+        - api.mintreplica.com
+      secretName: mint-replica-tls
+  
+  # Routing rules
+  rules:
+    - host: api.mintreplica.com
+      http:
+        paths:
+          # Auth service routes
+          - path: /api/v1/auth(/|$)(.*)
+            pathType: Prefix
+            backend:
+              service:
+                name: auth-service
+                port:
+                  number: 8080
+          
+          # API Gateway routes (catches all other /api/v1 paths)
+          - path: /api/v1(/|$)(.*)
+            pathType: Prefix
+            backend:
+              service:
+                name: api-gateway
+                port:
+                  number: 8080
