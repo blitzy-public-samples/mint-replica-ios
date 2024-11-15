@@ -1,0 +1,139 @@
+# Human Tasks:
+# 1. Ensure Docker image 'mintreplica/budget-service:latest' is built and pushed to container registry
+# 2. Verify network policies are configured for the mint-budgets namespace
+# 3. Configure service account with appropriate RBAC permissions
+# 4. Verify Prometheus operator is deployed and configured to scrape metrics
+
+# Kubernetes API Version: 1.25+
+# Prometheus Version: 2.40+
+
+---
+# Service configuration for Budget Service
+# Implements requirement: Budget Service Component (Technical Specification/5.1 High-Level Architecture Overview)
+apiVersion: v1
+kind: Service
+metadata:
+  name: budget-service
+  namespace: mint-budgets
+  labels:
+    app: budget-service
+    component: budgets
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "8080"
+    prometheus.io/path: "/metrics"
+spec:
+  selector:
+    app: budget-service
+  ports:
+    - protocol: TCP
+      port: 8080
+      targetPort: 8080
+      name: http
+  type: ClusterIP
+
+---
+# Deployment configuration for Budget Service
+# Implements requirements:
+# - Budget Management (Technical Specification/1.1 System Overview/Core Features)
+# - Infrastructure Technology (Technical Specification/5.3 Technology Stack/5.3.4 Infrastructure)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: budget-service
+  namespace: mint-budgets
+  labels:
+    app: budget-service
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: budget-service
+  template:
+    metadata:
+      labels:
+        app: budget-service
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: "/metrics"
+    spec:
+      # Security context configuration
+      securityContext:
+        runAsNonRoot: true
+        readOnlyRootFilesystem: true
+        allowPrivilegeEscalation: false
+      
+      # Service account configuration
+      serviceAccountName: budget-service-sa
+      
+      containers:
+        - name: budget-service
+          image: mintreplica/budget-service:latest
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          
+          # Resource limits and requests
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+          
+          # Liveness probe configuration
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          
+          # Readiness probe configuration
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          
+          # Environment variables
+          env:
+            - name: SPRING_PROFILES_ACTIVE
+              value: "production"
+            - name: SERVER_PORT
+              value: "8080"
+          
+          # Security context for container
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 1000
+            capabilities:
+              drop:
+                - ALL
+          
+          # Volume mounts for temporary storage
+          volumeMounts:
+            - name: tmp-volume
+              mountPath: /tmp
+              readOnly: false
+      
+      # Volumes configuration
+      volumes:
+        - name: tmp-volume
+          emptyDir: {}
+      
+      # Pod security policies
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
