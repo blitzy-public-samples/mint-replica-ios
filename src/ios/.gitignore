@@ -1,0 +1,94 @@
+# Addresses requirements from Technical Specification 5.3.1 Frontend Technologies and 7.2.1 Mobile Development
+
+## Build generated
+build/
+DerivedData/
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+.build/
+Build/
+
+## Xcode
+*.pbxuser
+!default.pbxuser
+*.mode1v3
+!default.mode1v3
+*.mode2v3
+!default.mode2v3
+*.perspectivev3
+!default.perspectivev3
+xcuserdata/
+*.xccheckout
+*.moved-aside
+*.xcuserstate
+*.xcscmblueprint
+*.xcworkspace/xcshareddata/
+*.xcodeproj/*
+!*.xcodeproj/project.pbxproj
+!*.xcodeproj/xcshareddata/
+!*.xcodeproj/project.xcworkspace/
+!*.xcworkspace/contents.xcworkspacedata
+
+## Swift Package Manager
+.build/
+.swiftpm/
+Package.resolved
+Packages/
+.package.resolved
+
+## macOS system files
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon
+._*
+.Spotlight-V100
+.Trashes
+
+## IDE settings
+.idea/
+*.swp
+*.swo
+*.swn
+.vscode/
+
+## Certificates and sensitive files
+*.cer
+*.mobileprovision
+*.p12
+*.key
+fastlane/report.xml
+fastlane/Preview.html
+fastlane/screenshots/**/*.png
+fastlane/test_output
+
+## Environment files
+.env
+.env.*
+Config.xcconfig
+*.xcconfig
+
+## Testing and coverage
+*.gcno
+*.gcda
+*.gcov
+*.coverage.txt
+xcov-report/
+
+## Dependencies
+Pods/
+Rome/
+Carthage/
+vendor/
+
+## CoreData
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+
+## Generated files
+*.generated.swift
+*.sourcery.swift
+*.generated.stringsdict
