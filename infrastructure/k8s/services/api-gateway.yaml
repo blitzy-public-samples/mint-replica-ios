@@ -1,0 +1,165 @@
+# Kubernetes API Version: v1.25+
+# Human Tasks:
+# 1. Replace ${AWS_ACM_CERT_ARN} with the actual AWS ACM certificate ARN for SSL/TLS termination
+# 2. Ensure AWS Load Balancer Controller is installed in the cluster
+# 3. Verify that the SSL certificate exists in AWS Certificate Manager
+# 4. Configure DNS records to point to the Load Balancer endpoint
+
+# This configuration implements:
+# - API Gateway Layer (Technical Specification/5.1 High-Level Architecture Overview)
+# - Service Integration (Technical Specification/7.3.1 Service Integration Architecture)
+# - Infrastructure Technology (Technical Specification/5.3 Technology Stack/5.3.4 Infrastructure)
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: api-gateway
+  namespace: mint-api  # References namespace from infrastructure/k8s/namespaces.yaml
+  labels:
+    app: mint-replica
+    component: api-gateway
+    tier: frontend
+  annotations:
+    # Prometheus monitoring configuration
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "9102"
+    
+    # AWS Load Balancer configurations
+    service.beta.kubernetes.io/aws-load-balancer-type: "nlb"  # Using Network Load Balancer
+    service.beta.kubernetes.io/aws-load-balancer-ssl-cert: "${AWS_ACM_CERT_ARN}"
+    service.beta.kubernetes.io/aws-load-balancer-backend-protocol: "http"
+    service.beta.kubernetes.io/aws-load-balancer-ssl-ports: "443"
+
+spec:
+  type: LoadBalancer
+  ports:
+    # HTTP port (will be redirected to HTTPS in production)
+    - port: 80
+      targetPort: 8080
+      protocol: TCP
+      name: http
+    
+    # HTTPS port for secure communication
+    - port: 443
+      targetPort: 8443
+      protocol: TCP
+      name: https
+    
+    # Prometheus metrics port
+    - port: 9102
+      targetPort: 9102
+      protocol: TCP
+      name: metrics
+
+  # Pod selector for the service
+  selector:
+    app: mint-replica
+    component: api-gateway
+
+  # Session affinity configuration for consistent routing
+  sessionAffinity: ClientIP
+  sessionAffinityConfig:
+    clientIP:
+      timeoutSeconds: 10800  # 3 hour session timeout
+
+---
+# Deployment configuration for the API Gateway
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api-gateway
+  namespace: mint-api
+  labels:
+    app: mint-replica
+    component: api-gateway
+    tier: frontend
+spec:
+  replicas: 3  # High availability configuration
+  selector:
+    matchLabels:
+      app: mint-replica
+      component: api-gateway
+  
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  
+  template:
+    metadata:
+      labels:
+        app: mint-replica
+        component: api-gateway
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9102"
+    spec:
+      containers:
+      - name: api-gateway
+        image: mint-replica/api-gateway:latest  # Image will be specified in deployment
+        ports:
+        - containerPort: 8080
+          name: http
+        - containerPort: 8443
+          name: https
+        - containerPort: 9102
+          name: metrics
+        
+        # Resource limits and requests
+        resources:
+          requests:
+            cpu: "500m"
+            memory: "512Mi"
+          limits:
+            cpu: "1000m"
+            memory: "1Gi"
+        
+        # Health check configurations
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 10
+          timeoutSeconds: 5
+          successThreshold: 1
+          failureThreshold: 3
+        
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 8080
+          initialDelaySeconds: 15
+          periodSeconds: 20
+          timeoutSeconds: 5
+          successThreshold: 1
+          failureThreshold: 3
+        
+        env:
+        - name: TLS_ENABLED
+          value: "true"
+        - name: CORS_ENABLED
+          value: "true"
+        - name: RATE_LIMIT_RPS
+          value: "100"
+        - name: RATE_LIMIT_BURST
+          value: "200"
+        - name: AUTH_REQUIRED
+          value: "true"
+        
+        # Service routing configuration
+        - name: ROUTE_AUTH_SERVICE
+          value: "http://authentication.mint-auth:8080/auth"
+        - name: ROUTE_TRANSACTIONS_SERVICE
+          value: "http://transactions.mint-transactions:8080/transactions"
+        - name: ROUTE_BUDGETS_SERVICE
+          value: "http://budgets.mint-budgets:8080/budgets"
+        - name: ROUTE_INVESTMENTS_SERVICE
+          value: "http://investments.mint-investments:8080/investments"
+        - name: ROUTE_GOALS_SERVICE
+          value: "http://goals.mint-goals:8080/goals"
+        - name: ROUTE_NOTIFICATIONS_SERVICE
+          value: "http://notifications.mint-notifications:8080/notifications"
+        - name: ROUTE_SYNC_SERVICE
+          value: "http://sync.mint-sync:8080/sync"
