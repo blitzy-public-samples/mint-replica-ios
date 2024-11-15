@@ -1,0 +1,88 @@
+# Kubernetes API Version: v1.25+
+# This file implements the namespace organization for the Mint Replica Lite microservices architecture
+# as specified in Technical Specification/5.1 High-Level Architecture Overview and
+# Technical Specification/5.3.4 Infrastructure requirements
+
+apiVersion: v1
+kind: List
+items:
+  # API Gateway namespace
+  - apiVersion: v1
+    kind: Namespace
+    metadata:
+      name: mint-api
+      labels:
+        name: mint-api
+        component: api-gateway
+
+  # Authentication service namespace
+  - apiVersion: v1
+    kind: Namespace
+    metadata:
+      name: mint-auth
+      labels:
+        name: mint-auth
+        component: authentication
+
+  # Transaction service namespace
+  - apiVersion: v1
+    kind: Namespace
+    metadata:
+      name: mint-transactions
+      labels:
+        name: mint-transactions
+        component: transactions
+
+  # Budget service namespace
+  - apiVersion: v1
+    kind: Namespace
+    metadata:
+      name: mint-budgets
+      labels:
+        name: mint-budgets
+        component: budgets
+
+  # Investment service namespace
+  - apiVersion: v1
+    kind: Namespace
+    metadata:
+      name: mint-investments
+      labels:
+        name: mint-investments
+        component: investments
+
+  # Goal service namespace
+  - apiVersion: v1
+    kind: Namespace
+    metadata:
+      name: mint-goals
+      labels:
+        name: mint-goals
+        component: goals
+
+  # Notification service namespace
+  - apiVersion: v1
+    kind: Namespace
+    metadata:
+      name: mint-notifications
+      labels:
+        name: mint-notifications
+        component: notifications
+
+  # Data Sync service namespace
+  - apiVersion: v1
+    kind: Namespace
+    metadata:
+      name: mint-sync
+      labels:
+        name: mint-sync
+        component: data-sync
+
+  # Monitoring namespace
+  - apiVersion: v1
+    kind: Namespace
+    metadata:
+      name: mint-monitoring
+      labels:
+        name: mint-monitoring
+        component: monitoring
