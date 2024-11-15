@@ -1,0 +1,147 @@
+# Kubernetes API Version: v1.25+
+# Firebase Admin SDK Version: 11.0+
+
+# Human Tasks:
+# 1. Create and configure the auth-secrets Kubernetes secret with:
+#    - jwt-secret: Base64 encoded JWT signing key
+#    - firebase-config: Base64 encoded Firebase service account JSON
+# 2. Create auth-service-account ServiceAccount with appropriate RBAC permissions
+# 3. Configure container registry access for mint-replica/auth-service image
+# 4. Verify network connectivity to Firebase Auth services is allowed
+
+# This file implements the Authentication Service component as specified in:
+# - Technical Specification/5.1 High-Level Architecture Overview
+# - Technical Specification/8.3.4 API Authentication Flow
+# - Technical Specification/5.3 Technology Stack/5.3.4 Infrastructure
+
+---
+# Service definition for authentication microservice
+apiVersion: v1
+kind: Service
+metadata:
+  name: auth-service
+  namespace: mint-auth
+  labels:
+    app: auth-service
+    component: authentication
+spec:
+  selector:
+    app: auth-service
+  ports:
+    - protocol: TCP
+      port: 8080
+      targetPort: 8080
+      name: http
+  type: ClusterIP
+
+---
+# Deployment configuration for authentication microservice
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: auth-service
+  namespace: mint-auth
+  labels:
+    app: auth-service
+    component: authentication
+spec:
+  replicas: 3  # High availability configuration with 3 replicas
+  selector:
+    matchLabels:
+      app: auth-service
+  template:
+    metadata:
+      labels:
+        app: auth-service
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: auth-service-account
+      containers:
+        - name: auth-service
+          image: mint-replica/auth-service:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8080
+              name: http
+          env:
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: auth-secrets
+                  key: jwt-secret
+            - name: FIREBASE_CONFIG
+              valueFrom:
+                secretKeyRef:
+                  name: auth-secrets
+                  key: firebase-config
+            - name: LOG_LEVEL
+              value: INFO
+            - name: LOG_FORMAT
+              value: JSON
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 2
+
+---
+# Network policy to control ingress/egress traffic
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: auth-service-network-policy
+  namespace: mint-auth
+spec:
+  podSelector:
+    matchLabels:
+      app: auth-service
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              name: mint-api
+      ports:
+        - protocol: TCP
+          port: 8080
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              name: mint-monitoring
+    # Allow egress to Firebase Auth and Redis Cache
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+      ports:
+        - protocol: TCP
+          port: 443  # HTTPS for Firebase Auth
+        - protocol: TCP
+          port: 6379  # Redis Cache
