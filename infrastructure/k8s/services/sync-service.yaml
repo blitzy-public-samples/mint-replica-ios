@@ -1,0 +1,191 @@
+# Human Tasks:
+# 1. Configure Plaid API credentials in Kubernetes secrets (plaid-credentials)
+# 2. Verify Redis service endpoint is accessible from the sync-service namespace
+# 3. Set up network policies for the allowed namespaces
+# 4. Configure proper TLS certificates for secure communication
+# 5. Update the sync-service image tag with the appropriate version
+
+# Implements requirements from:
+# - Technical Specification/5. System Architecture/5.1 High-Level Architecture Overview
+# - Technical Specification/6.2 Sequence Diagrams/6.2.1 Account Synchronization Flow
+
+---
+# Service definition for sync-service
+apiVersion: v1
+kind: Service
+metadata:
+  name: sync-service
+  namespace: mint-sync
+  labels:
+    app: sync-service
+    component: data-sync
+spec:
+  selector:
+    app: sync-service
+  ports:
+    - port: 8080
+      targetPort: 8080
+      protocol: TCP
+      name: http
+    - port: 9090
+      targetPort: 9090
+      protocol: TCP
+      name: metrics
+  type: ClusterIP
+
+---
+# Deployment configuration for sync-service
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sync-service
+  namespace: mint-sync
+  labels:
+    app: sync-service
+    component: data-sync
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: sync-service
+  template:
+    metadata:
+      labels:
+        app: sync-service
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: sync-service
+      securityContext:
+        fsGroup: 1000
+      containers:
+        - name: sync-service
+          image: sync-service:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8080
+              name: http
+            - containerPort: 9090
+              name: metrics
+          resources:
+            requests:
+              cpu: "200m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+          env:
+            - name: NODE_ENV
+              value: "production"
+            - name: PLAID_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: plaid-credentials
+                  key: client-id
+            - name: PLAID_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: plaid-credentials
+                  key: secret
+            - name: REDIS_HOST
+              value: "redis.data-store.svc.cluster.local"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            readOnlyRootFilesystem: true
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+
+---
+# Network Policy for sync-service
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: sync-service-network-policy
+  namespace: mint-sync
+spec:
+  podSelector:
+    matchLabels:
+      app: sync-service
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              name: mint-api
+        - namespaceSelector:
+            matchLabels:
+              name: mint-transactions
+        - namespaceSelector:
+            matchLabels:
+              name: mint-monitoring
+      ports:
+        - port: 8080
+          protocol: TCP
+        - port: 9090
+          protocol: TCP
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              name: mint-monitoring
+      ports:
+        - port: 6379
+          protocol: TCP
+
+---
+# Service Account for sync-service
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: sync-service
+  namespace: mint-sync
+
+---
+# RBAC Role for sync-service
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: sync-service-role
+  namespace: mint-sync
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps", "secrets"]
+    verbs: ["get", "list"]
+
+---
+# RBAC RoleBinding for sync-service
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: sync-service-role-binding
+  namespace: mint-sync
+subjects:
+  - kind: ServiceAccount
+    name: sync-service
+    namespace: mint-sync
+roleRef:
+  kind: Role
+  name: sync-service-role
+  apiGroup: rbac.authorization.k8s.io
