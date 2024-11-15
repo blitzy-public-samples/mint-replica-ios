@@ -1,0 +1,162 @@
+# Human Tasks:
+# 1. Verify FCM credentials secret exists in the mint-notifications namespace
+# 2. Ensure Redis service is accessible from notification service namespace
+# 3. Configure network policies for allowed namespaces
+# 4. Verify Prometheus scraping configuration is properly set up
+
+# Implements:
+# - Real-time notifications and alerts (Technical Specification/1.2 Scope/Core Features)
+# - Push Notification Services (Technical Specification/5.1 High-Level Architecture Overview/External Services)
+
+---
+# Service definition for notification service
+apiVersion: v1
+kind: Service
+metadata:
+  name: notification-service
+  namespace: mint-notifications
+  labels:
+    app: notification-service
+    component: notifications
+spec:
+  selector:
+    app: notification-service
+  ports:
+    - port: 8080
+      targetPort: 8080
+      protocol: TCP
+      name: http
+    - port: 9090
+      targetPort: 9090
+      protocol: TCP
+      name: metrics
+  type: ClusterIP
+
+---
+# Deployment configuration for notification service
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: notification-service
+  namespace: mint-notifications
+  labels:
+    app: notification-service
+    component: notifications
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: notification-service
+  template:
+    metadata:
+      labels:
+        app: notification-service
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: notification-service
+      containers:
+        - name: notification-service
+          image: mint-replica/notification-service:latest
+          ports:
+            - containerPort: 8080
+              name: http
+            - containerPort: 9090
+              name: metrics
+          resources:
+            limits:
+              cpu: "500m"
+              memory: "1Gi"
+            requests:
+              cpu: "200m"
+              memory: "512Mi"
+          env:
+            - name: REDIS_HOST
+              value: "redis.data-store.svc.cluster.local"
+            - name: REDIS_PORT
+              value: "6379"
+            - name: FCM_CREDENTIALS
+              valueFrom:
+                secretKeyRef:
+                  name: fcm-credentials
+                  key: credentials.json
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 5
+
+---
+# Network Policy for notification service
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: notification-service-network-policy
+  namespace: mint-notifications
+spec:
+  podSelector:
+    matchLabels:
+      app: notification-service
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              name: mint-api
+        - namespaceSelector:
+            matchLabels:
+              name: mint-monitoring
+        - namespaceSelector:
+            matchLabels:
+              name: data-store
+      ports:
+        - protocol: TCP
+          port: 8080
+        - protocol: TCP
+          port: 9090
+
+---
+# Service Account for notification service
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: notification-service
+  namespace: mint-notifications
+
+---
+# RBAC Role for notification service
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: notification-service-role
+  namespace: mint-notifications
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps", "secrets"]
+    verbs: ["get", "list", "watch"]
+
+---
+# RBAC Role Binding for notification service
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: notification-service-role-binding
+  namespace: mint-notifications
+subjects:
+  - kind: ServiceAccount
+    name: notification-service
+    namespace: mint-notifications
+roleRef:
+  kind: Role
+  name: notification-service-role
+  apiGroup: rbac.authorization.k8s.io
