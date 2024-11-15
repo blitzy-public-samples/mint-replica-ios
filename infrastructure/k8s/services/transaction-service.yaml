@@ -1,0 +1,110 @@
+# Human Tasks:
+# 1. Verify that the transaction-service Docker image is built and available in the container registry
+# 2. Ensure network policies allow communication between services
+# 3. Verify Prometheus has RBAC permissions to scrape metrics from this namespace
+# 4. Review resource limits and adjust based on actual usage patterns
+# 5. Configure any necessary environment-specific variables
+
+# Implements:
+# - Transaction Processing Service (Technical Specification/5.1 High-Level Architecture Overview/Service Layer)
+# - Transaction Management (Technical Specification/1.2 Scope/Core Features)
+# - Infrastructure Monitoring (Technical Specification/5.3.4 Infrastructure)
+
+---
+# Service definition for transaction-service
+apiVersion: v1
+kind: Service
+metadata:
+  name: transaction-service
+  namespace: mint-transactions
+  labels:
+    app: transaction-service
+    component: transactions
+  annotations:
+    # Prometheus monitoring configuration
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "8080"
+    prometheus.io/path: "/metrics"
+spec:
+  type: ClusterIP
+  selector:
+    app: transaction-service
+  ports:
+    - port: 8080
+      targetPort: 8080
+      protocol: TCP
+      name: http
+
+---
+# Deployment definition for transaction-service
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: transaction-service
+  namespace: mint-transactions
+  labels:
+    app: transaction-service
+    component: transactions
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: transaction-service
+  template:
+    metadata:
+      labels:
+        app: transaction-service
+    spec:
+      containers:
+        - name: transaction-service
+          image: transaction-service:latest
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          
+          # Resource limits and requests
+          resources:
+            limits:
+              cpu: "500m"
+              memory: "1Gi"
+            requests:
+              cpu: "200m"
+              memory: "512Mi"
+          
+          # Health checks
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          
+          # Security context
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          
+      # Pod security context
+      securityContext:
+        fsGroup: 2000
+        runAsNonRoot: true
+      
+      # Termination grace period
+      terminationGracePeriodSeconds: 60
