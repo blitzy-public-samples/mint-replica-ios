@@ -1,0 +1,170 @@
+# Human Tasks:
+# 1. Ensure ConfigMap 'goal-service-config' is created with required database configuration
+# 2. Verify Docker image 'mintreplica/goal-service:latest' is built and pushed to registry
+# 3. Configure network policies for the mint-goals namespace if not already done
+# 4. Set up Prometheus monitoring stack to collect metrics
+# 5. Configure horizontal pod autoscaling (HPA) for the deployment
+
+# Kubernetes API Version: v1.25+
+# Prometheus Version: 2.40+
+
+---
+# Service configuration for Goal Service
+# Implements: Technical Specification/5.1 High-Level Architecture Overview - Goal Service Component
+apiVersion: v1
+kind: Service
+metadata:
+  name: goal-service
+  namespace: mint-goals  # References namespace from infrastructure/k8s/namespaces.yaml
+  labels:
+    app: goal-service
+    component: goals
+  annotations:
+    prometheus.io/scrape: "true"  # Enable Prometheus metrics collection
+    prometheus.io/port: "8080"    # Port for metrics scraping
+    prometheus.io/path: "/metrics"  # Metrics endpoint path
+spec:
+  type: ClusterIP  # Internal service type for cluster communication
+  selector:
+    app: goal-service
+  ports:
+    - name: http
+      protocol: TCP
+      port: 8080
+      targetPort: 8080
+
+---
+# Deployment configuration for Goal Service
+# Implements: Technical Specification/1.2 Scope/Core Features - Financial Goal Management
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: goal-service
+  namespace: mint-goals
+  labels:
+    app: goal-service
+spec:
+  replicas: 3  # Initial replica count for high availability
+  selector:
+    matchLabels:
+      app: goal-service
+  template:
+    metadata:
+      labels:
+        app: goal-service
+    spec:
+      # Implements: Technical Specification/5.3 Technology Stack/5.3.4 Infrastructure
+      serviceAccountName: goal-service  # Service account for pod security
+      securityContext:
+        runAsNonRoot: true  # Security best practice
+        readOnlyRootFilesystem: true  # Enforce read-only root filesystem
+      containers:
+        - name: goal-service
+          image: mintreplica/goal-service:latest
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          env:
+            - name: SPRING_PROFILES_ACTIVE
+              value: "production"
+            - name: DB_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: goal-service-config
+                  key: db_host
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "250m"
+            limits:
+              memory: "1Gi"
+              cpu: "500m"
+          livenessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: config-volume
+              mountPath: /config
+              readOnly: true
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: config-volume
+          configMap:
+            name: goal-service-config
+
+---
+# Horizontal Pod Autoscaler configuration
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: goal-service
+  namespace: mint-goals
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: goal-service
+  minReplicas: 3
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 80
+
+---
+# Network Policy for Goal Service
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: goal-service-network-policy
+  namespace: mint-goals
+spec:
+  podSelector:
+    matchLabels:
+      app: goal-service
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              name: mint-api
+        - namespaceSelector:
+            matchLabels:
+              name: mint-monitoring
+      ports:
+        - protocol: TCP
+          port: 8080
+  egress:
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              app: postgresql
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              app: redis
