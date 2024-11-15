@@ -1,0 +1,167 @@
+# Human Tasks:
+# 1. Ensure Redis TLS certificates are properly configured and mounted
+# 2. Configure Redis authentication password in a secure manner (e.g., using Kubernetes Secrets)
+# 3. Verify storage class availability for PersistentVolumeClaims
+# 4. Install Redis Prometheus exporter for metrics collection
+
+# Implements Redis cache requirements as specified in:
+# - Technical Specification/5.1 High-Level Architecture Overview/Data Layer
+# - Technical Specification/5.2 Component Architecture
+# - Technical Specification/5.3 Technology Stack/5.3.4 Infrastructure
+
+---
+# Redis Configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: redis-config
+  namespace: mint-monitoring
+  labels:
+    app: redis
+    component: cache
+data:
+  redis.conf: |
+    # Memory Management
+    maxmemory 2gb
+    maxmemory-policy allkeys-lru
+
+    # Persistence Configuration
+    appendonly yes
+    save 900 1
+    save 300 10
+    save 60 10000
+
+    # Replication Settings
+    replica-priority 100
+
+    # Connection Settings
+    timeout 300
+    tcp-keepalive 60
+
+    # Security Settings
+    protected-mode yes
+    tls-replication yes
+    tls-auth-clients yes
+
+---
+# Redis StatefulSet Deployment
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: redis
+  namespace: mint-monitoring
+  labels:
+    app: redis
+    component: cache
+spec:
+  replicas: 3
+  serviceName: redis
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9121"
+    spec:
+      containers:
+      - name: redis
+        image: redis:7.0-alpine
+        ports:
+        - containerPort: 6379
+          name: redis
+        - containerPort: 9121
+          name: metrics
+        resources:
+          limits:
+            cpu: 1000m
+            memory: 2Gi
+          requests:
+            cpu: 500m
+            memory: 1Gi
+        volumeMounts:
+        - name: redis-data
+          mountPath: /data
+        - name: redis-config
+          mountPath: /etc/redis
+        command:
+        - redis-server
+        - /etc/redis/redis.conf
+        livenessProbe:
+          tcpSocket:
+            port: redis
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          tcpSocket:
+            port: redis
+          initialDelaySeconds: 5
+          periodSeconds: 5
+      - name: redis-exporter
+        image: oliver006/redis_exporter:v1.44.0
+        ports:
+        - containerPort: 9121
+          name: metrics
+        resources:
+          limits:
+            cpu: 100m
+            memory: 128Mi
+          requests:
+            cpu: 50m
+            memory: 64Mi
+      volumes:
+      - name: redis-config
+        configMap:
+          name: redis-config
+  volumeClaimTemplates:
+  - metadata:
+      name: redis-data
+    spec:
+      accessModes:
+      - ReadWriteOnce
+      resources:
+        requests:
+          storage: 10Gi
+
+---
+# Redis Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: mint-monitoring
+  labels:
+    app: redis
+    component: cache
+spec:
+  ports:
+  - port: 6379
+    targetPort: redis
+    name: redis
+  - port: 9121
+    targetPort: metrics
+    name: metrics
+  selector:
+    app: redis
+  clusterIP: None
+
+---
+# Redis Metrics Service (for Prometheus)
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-metrics
+  namespace: mint-monitoring
+  labels:
+    app: redis
+    component: cache
+spec:
+  ports:
+  - port: 9121
+    targetPort: metrics
+    name: metrics
+  selector:
+    app: redis
