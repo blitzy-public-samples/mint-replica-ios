@@ -1,0 +1,129 @@
+# Human Tasks:
+# 1. Configure App Store Connect API credentials in repository secrets:
+#    - APP_STORE_CONNECT_KEY_ID
+#    - APP_STORE_CONNECT_PRIVATE_KEY
+#    - APP_STORE_CONNECT_ISSUER_ID
+# 2. Add code signing certificates and provisioning profiles:
+#    - PROVISIONING_PROFILE_BASE64
+#    - CERTIFICATE_BASE64
+#    - P12_PASSWORD
+
+# Implements requirements:
+# - CI/CD Pipeline (Technical Specification/5.3.4 Infrastructure)
+# - iOS Development (Technical Specification/7.1 Programming Languages)
+# - Minimal Dependencies (Technical Specification/Constraints for the AI to Generate a New iOS App/5)
+
+name: iOS Deploy
+
+on:
+  workflow_run:
+    workflows: ['iOS Build', 'iOS Tests']
+    branches: [main]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Deployment environment'
+        required: true
+        type: choice
+        options:
+          - staging
+          - production
+      release_type:
+        description: 'Type of release'
+        required: true
+        type: choice
+        options:
+          - beta
+          - release
+
+env:
+  XCODE_VERSION: '14.0'
+  IOS_DEPLOYMENT_TARGET: '15.0'
+  SWIFT_VERSION: '5.5'
+  SCHEME: 'MintReplicaLite'
+  CONFIGURATION: 'Release'
+  BUNDLE_ID: 'com.mintreplica.lite'
+  MARKETING_VERSION: '1.0.0'
+  CURRENT_PROJECT_VERSION: '1'
+
+jobs:
+  deploy:
+    name: Deploy to TestFlight/App Store
+    runs-on: macos-latest
+    environment:
+      name: ${{ github.event.inputs.environment || 'staging' }}
+      url: ${{ steps.deploy.outputs.testflight_url }}
+
+    # Only run if all dependent workflows succeeded
+    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v3
+
+      - name: Setup Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: ${{ env.XCODE_VERSION }}
+
+      - name: Download Build Artifact
+        uses: actions/download-artifact@v3
+        with:
+          name: app_binary
+          path: artifacts
+
+      - name: Install Code Signing Certificates
+        env:
+          CERTIFICATE_BASE64: ${{ secrets.CERTIFICATE_BASE64 }}
+          P12_PASSWORD: ${{ secrets.P12_PASSWORD }}
+        run: |
+          CERTIFICATE_PATH=$RUNNER_TEMP/build_certificate.p12
+          KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
+          
+          # Decode and write certificate
+          echo -n "$CERTIFICATE_BASE64" | base64 --decode --output $CERTIFICATE_PATH
+          
+          # Create keychain
+          security create-keychain -p "" $KEYCHAIN_PATH
+          security set-keychain-settings -lut 21600 $KEYCHAIN_PATH
+          security unlock-keychain -p "" $KEYCHAIN_PATH
+          
+          # Import certificate
+          security import $CERTIFICATE_PATH -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k $KEYCHAIN_PATH
+          security list-keychain -d user -s $KEYCHAIN_PATH
+
+      - name: Install Provisioning Profile
+        env:
+          PROVISIONING_PROFILE_BASE64: ${{ secrets.PROVISIONING_PROFILE_BASE64 }}
+        run: |
+          PROFILE_PATH=$RUNNER_TEMP/profile.mobileprovision
+          
+          # Decode and install provisioning profile
+          echo -n "$PROVISIONING_PROFILE_BASE64" | base64 --decode --output $PROFILE_PATH
+          mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
+          cp $PROFILE_PATH ~/Library/MobileDevice/Provisioning\ Profiles/
+
+      - name: Deploy to TestFlight/App Store
+        id: deploy
+        uses: apple-actions/upload-testflight@v1
+        with:
+          app-path: artifacts/MintReplicaLite.ipa
+          api-key-id: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          api-private-key: ${{ secrets.APP_STORE_CONNECT_PRIVATE_KEY }}
+          api-issuer-id: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          beta-group: ${{ github.event.inputs.environment == 'staging' && 'Internal Testers' || '' }}
+          submit-to-app-store: ${{ github.event.inputs.environment == 'production' && github.event.inputs.release_type == 'release' }}
+
+      - name: Clean Up Certificates
+        if: always()
+        run: |
+          security delete-keychain $RUNNER_TEMP/app-signing.keychain-db
+          rm -rf ~/Library/MobileDevice/Provisioning\ Profiles/
+
+      - name: Set Deployment Status
+        if: success()
+        run: |
+          echo "environment=${{ github.event.inputs.environment || 'staging' }}" >> $GITHUB_OUTPUT
+          echo "version=${{ env.MARKETING_VERSION }}" >> $GITHUB_OUTPUT
+          echo "testflight_url=${{ steps.deploy.outputs.testflight_url }}" >> $GITHUB_OUTPUT
