@@ -1,0 +1,26 @@
+# This CODEOWNERS file defines code ownership and review requirements for the Mint Replica Lite iOS application
+# Last matching pattern takes precedence
+
+# iOS Application Code - Swift and SwiftUI implementation
+*.swift                  @ios-team-lead @senior-ios-dev
+*.xib                   @ios-team-lead @senior-ios-dev
+*.storyboard            @ios-team-lead @senior-ios-dev
+Package.swift           @ios-team-lead @devops-lead
+
+# Infrastructure and Configuration Files
+*.ts                    @devops-lead @infrastructure-team
+*.yaml                  @devops-lead @infrastructure-team
+*.json                  @devops-lead @infrastructure-team
+Dockerfile              @devops-lead @infrastructure-team
+
+# GitHub Actions Workflows
+.github/workflows/*.yml  @devops-lead @ci-cd-team
+.github/workflows/*.yaml @devops-lead @ci-cd-team
+
+# Documentation
+*.md                    @tech-docs-team @product-owner
+docs/*                  @tech-docs-team @product-owner
+README.md               @tech-docs-team @product-owner
+
+# Default owners for everything else
+*                       @project-lead @tech-lead
