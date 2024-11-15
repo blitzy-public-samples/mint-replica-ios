@@ -1,0 +1,324 @@
+# Human Tasks:
+# 1. Create and verify the monitoring namespace exists
+# 2. Generate and set secure values for GRAFANA_ADMIN_PASSWORD and GRAFANA_SECRET_KEY
+# 3. Configure TLS certificates if TLS is enabled
+# 4. Verify network policies allow Grafana to access Prometheus
+# 5. Set up persistent storage for Grafana if needed
+# 6. Configure any additional RBAC permissions required
+
+# Implements:
+# - Infrastructure Monitoring (Technical Specification/5.3.4 Infrastructure)
+# - Service Monitoring (Technical Specification/5.1 High-Level Architecture Overview)
+
+---
+# ConfigMap for Grafana configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-config
+  namespace: monitoring
+  labels:
+    app: mint-replica
+    component: monitoring
+data:
+  grafana.ini: |
+    [server]
+    http_port = 3000
+    domain = grafana.mintreplica.local
+    root_url = %(protocol)s://%(domain)s/
+
+    [security]
+    admin_user = admin
+    admin_password = ${GRAFANA_ADMIN_PASSWORD}
+    secret_key = ${GRAFANA_SECRET_KEY}
+
+    [auth]
+    disable_login_form = false
+    disable_signout_menu = false
+    login_maximum_inactive_lifetime_duration = 7d
+
+    [users]
+    allow_sign_up = false
+    auto_assign_org = true
+    auto_assign_org_role = Viewer
+
+    [analytics]
+    reporting_enabled = false
+    check_for_updates = true
+
+  datasources.yaml: |
+    apiVersion: 1
+    datasources:
+      - name: Prometheus
+        type: prometheus
+        access: proxy
+        url: http://prometheus:9090
+        isDefault: true
+        version: 1
+        editable: false
+        jsonData:
+          timeInterval: "15s"
+          queryTimeout: "30s"
+          httpMethod: "POST"
+
+  dashboards.yaml: |
+    apiVersion: 1
+    providers:
+      - name: Default
+        folder: ""
+        type: file
+        options:
+          path: /var/lib/grafana/dashboards
+        allowUiUpdates: false
+
+---
+# Service Account for Grafana
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: grafana
+  namespace: monitoring
+  labels:
+    app: mint-replica
+    component: grafana
+
+---
+# Deployment for Grafana
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana
+  namespace: monitoring
+  labels:
+    app: mint-replica
+    component: grafana
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: grafana
+  template:
+    metadata:
+      labels:
+        app: grafana
+    spec:
+      serviceAccountName: grafana
+      securityContext:
+        fsGroup: 472
+        runAsUser: 472
+      containers:
+        - name: grafana
+          image: grafana/grafana:9.5.3
+          ports:
+            - containerPort: 3000
+              name: http
+          env:
+            - name: GF_SECURITY_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: grafana-secrets
+                  key: admin-password
+            - name: GF_SECURITY_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: grafana-secrets
+                  key: secret-key
+          resources:
+            limits:
+              cpu: 500m
+              memory: 1Gi
+            requests:
+              cpu: 250m
+              memory: 512Mi
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: 3000
+            initialDelaySeconds: 30
+            timeoutSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: 3000
+            initialDelaySeconds: 60
+            timeoutSeconds: 5
+          volumeMounts:
+            - name: config
+              mountPath: /etc/grafana/grafana.ini
+              subPath: grafana.ini
+            - name: datasources
+              mountPath: /etc/grafana/provisioning/datasources/datasources.yaml
+              subPath: datasources.yaml
+            - name: dashboards-provisioning
+              mountPath: /etc/grafana/provisioning/dashboards/dashboards.yaml
+              subPath: dashboards.yaml
+            - name: dashboards
+              mountPath: /var/lib/grafana/dashboards
+      volumes:
+        - name: config
+          configMap:
+            name: grafana-config
+            items:
+              - key: grafana.ini
+                path: grafana.ini
+        - name: datasources
+          configMap:
+            name: grafana-config
+            items:
+              - key: datasources.yaml
+                path: datasources.yaml
+        - name: dashboards-provisioning
+          configMap:
+            name: grafana-config
+            items:
+              - key: dashboards.yaml
+                path: dashboards.yaml
+        - name: dashboards
+          configMap:
+            name: grafana-dashboards
+
+---
+# Service to expose Grafana
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana
+  namespace: monitoring
+  labels:
+    app: mint-replica
+    component: grafana
+spec:
+  ports:
+    - port: 3000
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    app: grafana
+  type: ClusterIP
+
+---
+# ConfigMap for Grafana Dashboards
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboards
+  namespace: monitoring
+  labels:
+    app: mint-replica
+    component: grafana
+data:
+  api-gateway.json: |
+    {
+      "title": "API Gateway Overview",
+      "uid": "api-gateway-overview",
+      "panels": [
+        {
+          "title": "Request Count",
+          "type": "graph",
+          "datasource": "Prometheus",
+          "targets": [
+            {
+              "expr": "rate(request_count[5m])",
+              "legendFormat": "Requests/sec"
+            }
+          ]
+        },
+        {
+          "title": "Request Latency",
+          "type": "graph",
+          "datasource": "Prometheus"
+        },
+        {
+          "title": "Error Rate",
+          "type": "graph",
+          "datasource": "Prometheus"
+        },
+        {
+          "title": "Request Size",
+          "type": "graph",
+          "datasource": "Prometheus"
+        }
+      ]
+    }
+  auth-service.json: |
+    {
+      "title": "Authentication Service",
+      "uid": "auth-service",
+      "panels": [
+        {
+          "title": "Active Sessions",
+          "type": "graph",
+          "datasource": "Prometheus"
+        },
+        {
+          "title": "Login Attempts",
+          "type": "graph",
+          "datasource": "Prometheus"
+        },
+        {
+          "title": "Token Validations",
+          "type": "graph",
+          "datasource": "Prometheus"
+        },
+        {
+          "title": "Auth Failures",
+          "type": "graph",
+          "datasource": "Prometheus"
+        }
+      ]
+    }
+  transaction-service.json: |
+    {
+      "title": "Transaction Service",
+      "uid": "transaction-service",
+      "panels": [
+        {
+          "title": "Transaction Count",
+          "type": "graph",
+          "datasource": "Prometheus"
+        },
+        {
+          "title": "Processing Time",
+          "type": "graph",
+          "datasource": "Prometheus"
+        },
+        {
+          "title": "Sync Status",
+          "type": "graph",
+          "datasource": "Prometheus"
+        },
+        {
+          "title": "Error Rate",
+          "type": "graph",
+          "datasource": "Prometheus"
+        }
+      ]
+    }
+  budget-service.json: |
+    {
+      "title": "Budget Service",
+      "uid": "budget-service",
+      "panels": [
+        {
+          "title": "Budget Updates",
+          "type": "graph",
+          "datasource": "Prometheus"
+        },
+        {
+          "title": "Calculation Time",
+          "type": "graph",
+          "datasource": "Prometheus"
+        },
+        {
+          "title": "Alert Triggers",
+          "type": "graph",
+          "datasource": "Prometheus"
+        },
+        {
+          "title": "Category Usage",
+          "type": "graph",
+          "datasource": "Prometheus"
+        }
+      ]
+    }
