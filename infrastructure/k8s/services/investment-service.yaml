@@ -1,0 +1,175 @@
+# Human Tasks:
+# 1. Verify container image exists in registry: mint-replica/investment-service:latest
+# 2. Configure network policies for ingress/egress rules
+# 3. Set up RBAC roles and bindings for service account
+# 4. Verify Redis cache and primary DB services are accessible
+# 5. Configure TLS certificates if needed for secure communication
+
+# Implements:
+# - Investment Portfolio Tracking (Technical Specification/1.1 System Overview/Core Features)
+# - Microservices Architecture (Technical Specification/5.1 High-Level Architecture Overview)
+# - Infrastructure Configuration (Technical Specification/5.3.4 Infrastructure)
+
+---
+# Service definition for investment-service
+apiVersion: v1
+kind: Service
+metadata:
+  name: investment-service
+  namespace: mint-investments
+  labels:
+    app: investment-service
+    component: investments
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "8080"
+    prometheus.io/path: "/metrics"
+spec:
+  type: ClusterIP
+  selector:
+    app: investment-service
+  ports:
+    - name: http
+      protocol: TCP
+      port: 8080
+      targetPort: 8080
+
+---
+# Deployment definition for investment-service
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: investment-service
+  namespace: mint-investments
+  labels:
+    app: investment-service
+    component: investments
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: investment-service
+  template:
+    metadata:
+      labels:
+        app: investment-service
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: "/metrics"
+    spec:
+      containers:
+        - name: investment-service
+          image: mint-replica/investment-service:latest
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          resources:
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+            requests:
+              cpu: "200m"
+              memory: "256Mi"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          env:
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+      securityContext:
+        fsGroup: 2000
+      serviceAccountName: investment-service
+
+---
+# Horizontal Pod Autoscaler for investment-service
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: investment-service
+  namespace: mint-investments
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: investment-service
+  minReplicas: 1
+  maxReplicas: 5
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80
+
+---
+# Network Policy for investment-service
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: investment-service-network-policy
+  namespace: mint-investments
+spec:
+  podSelector:
+    matchLabels:
+      app: investment-service
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              name: mint-api
+          podSelector:
+            matchLabels:
+              component: api-gateway
+      ports:
+        - protocol: TCP
+          port: 8080
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app: redis-cache
+      ports:
+        - protocol: TCP
+          port: 6379
+    - to:
+        - podSelector:
+            matchLabels:
+              app: primary-db
+      ports:
+        - protocol: TCP
+          port: 5432
